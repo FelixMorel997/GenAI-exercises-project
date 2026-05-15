@@ -3,11 +3,13 @@ from ragas.embeddings import LangchainEmbeddingsWrapper
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
 from typing import Dict, List, Optional
+import os
 
 # RAGAS imports
 try:
     from ragas import SingleTurnSample
-    from ragas.metrics import BleuScore, NonLLMContextPrecisionWithReference, ResponseRelevancy, Faithfulness, RougeScore
+    from ragas import EvaluationDataset
+    from ragas.metrics import ResponseRelevancy, Faithfulness
     from ragas import evaluate
     RAGAS_AVAILABLE = True
 except ImportError:
@@ -17,11 +19,44 @@ def evaluate_response_quality(question: str, answer: str, contexts: List[str]) -
     """Evaluate response quality using RAGAS metrics"""
     if not RAGAS_AVAILABLE:
         return {"error": "RAGAS not available"}
-    
-    # TODO: Create evaluator LLM with model gpt-3.5-turbo
-    # TODO: Create evaluator_embeddings with model test-embedding-3-small
-    # TODO: Define an instance for each metric to evaluate
-    # TODO: Evaluate the response using the metrics
-    # TODO: Return the evaluation results
 
-    pass
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if api_key.startswith("voc"):
+        base_url = "https://openai.vocareum.com/v1"
+    else:
+        base_url = None
+
+    llm = ChatOpenAI(
+        model="gpt-3.5-turbo",
+        temperature=0,
+        api_key=api_key,
+        base_url=base_url,
+    )
+    evaluator_llm = LangchainLLMWrapper(llm)
+
+    embeddings = OpenAIEmbeddings(
+        model="text-embedding-3-small",
+        api_key=api_key,
+        base_url=base_url,
+    )
+    evaluator_embeddings = LangchainEmbeddingsWrapper(embeddings)
+
+    metrics = [
+        Faithfulness(llm=evaluator_llm),
+        ResponseRelevancy(llm=evaluator_llm, embeddings=evaluator_embeddings)
+    ]
+
+    sample = SingleTurnSample(
+        user_input=question,
+        response=answer,
+        retrieved_contexts=contexts,
+    )
+
+    dataset = EvaluationDataset.from_list([sample.to_dict()])
+    result = evaluate(
+        dataset,
+        metrics=metrics,
+    )
+
+    df = result.to_pandas()
+    return df.iloc[0].to_dict()
